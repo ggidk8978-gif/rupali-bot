@@ -1,4 +1,4 @@
-import os
+ import os
 import random
 import time
 from collections import defaultdict, deque
@@ -15,13 +15,15 @@ BOT_NAME = "Rupali"
 # Secrets come from environment variables (never write them in this file).
 TOKEN = os.environ.get("DISCORD_TOKEN")
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
+# If the main model fails, these are tried next.
+FALLBACK_MODELS = ["gemini-flash-latest", "gemini-3.8-flash"]
 
 if not TOKEN:
     raise SystemExit("Set the DISCORD_TOKEN environment variable first.")
 
 intents = discord.Intents.default()
-intents.message_content = True  # turn on "Message Content Intent" in the Developer Portal
+intents.message_content = True  # needs "Message Content Intent" in the Developer Portal
 bot = commands.Bot(
     command_prefix="!",
     intents=intents,
@@ -48,17 +50,15 @@ PERSONAS = {
 }
 
 # ---------------- In-memory settings (reset when the host restarts) ----------------
-guild_mode = {}                       # guild_id -> persona name
-ai_channels = defaultdict(set)        # guild_id -> {channel_id}
-history = defaultdict(lambda: deque(maxlen=12))  # channel_id -> recent lines
-last_used = {}                        # user_id -> timestamp
+guild_mode = {}
+ai_channels = defaultdict(set)
+history = defaultdict(lambda: deque(maxlen=12))
+last_used = {}
 
 
-async def ask_ai(system, prompt):
-    """Ask Google Gemini. Returns text, or None if something failed."""
-    if not GEMINI_KEY:
-        return None
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+async def call_gemini(model, system, prompt):
+    """One request to Gemini. Returns (text or None, error string or None)."""
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
     payload = {
         "systemInstruction": {"parts": [{"text": system}]},
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
@@ -69,16 +69,30 @@ async def ask_ai(system, prompt):
             url,
             json=payload,
             headers={"x-goog-api-key": GEMINI_KEY},
-            timeout=aiohttp.ClientTimeout(total=30),
+            timeout=aiohttp.ClientTimeout(total=60),
         ) as r:
             data = await r.json()
             if r.status != 200:
-                print("Gemini error:", r.status, data)
-                return None
-            return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                return None, f"{model} -> HTTP {r.status}: {data}"
+            try:
+                return data["candidates"][0]["content"]["parts"][0]["text"].strip(), None
+            except (KeyError, IndexError, TypeError):
+                return None, f"{model} -> empty/blocked reply: {data}"
     except Exception as e:  # noqa: BLE001
-        print("AI request failed:", e)
+        return None, f"{model} -> {type(e).__name__}: {e!r}"
+
+
+async def ask_ai(system, prompt):
+    """Try the main model, then fallbacks. Logs the real error reason."""
+    if not GEMINI_KEY:
         return None
+    models = [GEMINI_MODEL] + [m for m in FALLBACK_MODELS if m != GEMINI_MODEL]
+    for model in models:
+        text, err = await call_gemini(model, system, prompt)
+        if text:
+            return text
+        print("Gemini error:", err, flush=True)
+    return None
 
 
 def persona_for(guild):
@@ -108,7 +122,7 @@ async def setup_hook():
 
 @bot.event
 async def on_ready():
-    print(f"Logged in as {bot.user} (ID: {bot.user.id})")
+    print(f"Logged in as {bot.user} (ID: {bot.user.id})", flush=True)
     await bot.change_presence(activity=discord.Game(name=f"{BOT_NAME} | /help"))
 
 
@@ -124,7 +138,6 @@ async def on_message(message: discord.Message):
     if not (mentioned or in_ai_channel or is_dm):
         return
 
-    # 3-second cooldown per user
     now = time.time()
     if now - last_used.get(message.author.id, 0) < 3:
         return
@@ -347,7 +360,7 @@ async def on_error(interaction: discord.Interaction, error: app_commands.AppComm
         msg = "I can't do that. Move my role above theirs and check my permissions."
     else:
         msg = "Something went wrong."
-        print(error)
+        print(error, flush=True)
     if interaction.response.is_done():
         await interaction.followup.send(msg, ephemeral=True)
     else:
@@ -355,4 +368,3 @@ async def on_error(interaction: discord.Interaction, error: app_commands.AppComm
 
 
 bot.run(TOKEN)
-    
