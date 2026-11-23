@@ -1,3 +1,4 @@
+import asyncio
 import os
 import random
 import time
@@ -15,9 +16,9 @@ BOT_NAME = "Rupali"
 # Secrets come from environment variables (never write them in this file).
 TOKEN = os.environ.get("DISCORD_TOKEN")
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-lite-latest")
 # If the main model fails, these are tried next.
-FALLBACK_MODELS = ["gemini-flash-latest", "gemini-3.8-flash"]
+FALLBACK_MODELS = ["gemini-flash-lite-latest", "gemini-flash-latest", "gemini-3.8-flash"]
 
 if not TOKEN:
     raise SystemExit("Set the DISCORD_TOKEN environment variable first.")
@@ -69,7 +70,7 @@ async def call_gemini(model, system, prompt):
             url,
             json=payload,
             headers={"x-goog-api-key": GEMINI_KEY},
-            timeout=aiohttp.ClientTimeout(total=60),
+            timeout=aiohttp.ClientTimeout(total=20),
         ) as r:
             data = await r.json()
             if r.status != 200:
@@ -83,15 +84,17 @@ async def call_gemini(model, system, prompt):
 
 
 async def ask_ai(system, prompt):
-    """Try the main model, then fallbacks. Logs the real error reason."""
+    """Try several models, and retry once if Google is busy. Logs the real reason."""
     if not GEMINI_KEY:
         return None
     models = [GEMINI_MODEL] + [m for m in FALLBACK_MODELS if m != GEMINI_MODEL]
-    for model in models:
-        text, err = await call_gemini(model, system, prompt)
-        if text:
-            return text
-        print("Gemini error:", err, flush=True)
+    for attempt in range(2):
+        for model in models:
+            text, err = await call_gemini(model, system, prompt)
+            if text:
+                return text
+            print("Gemini error:", err, flush=True)
+        await asyncio.sleep(2)  # short pause, then try the models once more
     return None
 
 
@@ -135,7 +138,21 @@ async def on_message(message: discord.Message):
     mentioned = bot.user in message.mentions
     in_ai_channel = message.guild and message.channel.id in ai_channels[message.guild.id]
     is_dm = message.guild is None
-    if not (mentioned or in_ai_channel or is_dm):
+
+    # Did this message reply to one of the bot's messages?
+    replied_to_text = None
+    if message.reference and message.reference.message_id:
+        ref = message.reference.resolved
+        if ref is None:
+            try:
+                ref = await message.channel.fetch_message(message.reference.message_id)
+            except Exception:  # noqa: BLE001
+                ref = None
+        if isinstance(ref, discord.Message) and ref.author.id == bot.user.id:
+            replied_to_text = ref.content or ""
+
+    replied_to_bot = replied_to_text is not None
+    if not (mentioned or replied_to_bot or in_ai_channel or is_dm):
         return
 
     now = time.time()
@@ -153,8 +170,12 @@ async def on_message(message: discord.Message):
         return
 
     lines = "\n".join(history[message.channel.id])
+    reply_note = ""
+    if replied_to_text:
+        reply_note = f'They are replying to your earlier message: "{replied_to_text[:300]}"\n'
     prompt = (
         f"Recent chat:\n{lines}\n\n"
+        f"{reply_note}"
         f"New message from {message.author.display_name}: {text}\n\n"
         f"Reply as {BOT_NAME}."
     )
