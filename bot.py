@@ -42,9 +42,10 @@ BASE_RULES = (
 PERSONAS = {
     "normal": "Be friendly, natural and casual. Chat like a good friend.",
     "roast": (
-        "Roast mode: be sarcastic and playfully savage, like friends joking around. "
-        "Never mock race, religion, gender, disability, family, looks or anything truly "
-        "personal. If someone seems upset, drop the roast and be kind."
+        "ROAST MODE: in every reply, playfully roast the person based on what they just said. "
+        "Be sarcastic, witty and savage like close friends joking around, but keep it short "
+        "(1-2 sentences). Never mock race, religion, gender, disability, family, looks or "
+        "anything truly personal. If someone seems genuinely upset, drop the roast and be kind."
     ),
     "playful": "Be super playful, goofy and energetic. Use jokes, emojis and banter.",
     "helper": "Be a clear, patient helper. Explain things simply and give useful answers.",
@@ -55,6 +56,7 @@ guild_mode = {}
 ai_channels = defaultdict(set)
 history = defaultdict(lambda: deque(maxlen=12))
 last_used = {}
+roast_channels = set()  # channels where roast mode is switched on
 
 
 async def call_gemini(model, system, prompt):
@@ -98,7 +100,9 @@ async def ask_ai(system, prompt):
     return None
 
 
-def persona_for(guild):
+def persona_for(guild, channel_id=None):
+    if channel_id in roast_channels:
+        return f"{BASE_RULES} {PERSONAS['roast']}"
     mode = guild_mode.get(guild.id, "normal") if guild else "normal"
     return f"{BASE_RULES} {PERSONAS[mode]}"
 
@@ -180,7 +184,7 @@ async def on_message(message: discord.Message):
         f"Reply as {BOT_NAME}."
     )
     async with message.channel.typing():
-        reply = await ask_ai(persona_for(message.guild), prompt)
+        reply = await ask_ai(persona_for(message.guild, message.channel.id), prompt)
 
     if not reply:
         await message.reply("My brain lagged for a sec. Try again!")
@@ -195,7 +199,7 @@ async def on_message(message: discord.Message):
 @app_commands.describe(message="What do you want to say?")
 async def chat(interaction: discord.Interaction, message: str):
     await interaction.response.defer()
-    reply = await ask_ai(persona_for(interaction.guild), f"{interaction.user.display_name} says: {message}")
+    reply = await ask_ai(persona_for(interaction.guild, interaction.channel_id), f"{interaction.user.display_name} says: {message}")
     await interaction.followup.send((reply or "My AI brain isn't available right now.")[:1900])
 
 
@@ -217,6 +221,19 @@ async def roast(interaction: discord.Interaction, user: discord.Member):
             "Your Wi-Fi has better connections than you do.",
         ])
     await interaction.followup.send(f"{user.mention} {reply}"[:1900])
+
+
+@bot.tree.command(name="roastmode", description="Toggle roast mode in this channel (use again for normal chat)")
+async def roastmode(interaction: discord.Interaction):
+    cid = interaction.channel_id
+    if cid in roast_channels:
+        roast_channels.discard(cid)
+        await interaction.response.send_message("😇 Roast mode OFF. Back to normal chat.")
+    else:
+        roast_channels.add(cid)
+        await interaction.response.send_message(
+            "🔥 Roast mode ON! I'll roast everyone who talks to me here. Use /roastmode again for normal chat."
+        )
 
 
 @bot.tree.command(name="mode", description="Change how Rupali talks in this server")
@@ -367,7 +384,7 @@ async def help_cmd(interaction: discord.Interaction):
     await interaction.response.send_message(
         f"**{BOT_NAME}**\n"
         "💬 **Chat:** mention me, DM me, or use /chat. Admins: /setchannel, /unsetchannel, /mode, /forget\n"
-        "🔥 **Fun:** /roast, /roll, /coinflip, /8ball, /rps, /serverinfo\n"
+        "🔥 **Fun:** /roast, /roastmode, /roll, /coinflip, /8ball, /rps, /serverinfo\n"
         "🛡️ **Mod:** /kick, /ban, /timeout, /clear, /slowmode",
         ephemeral=True,
     )
