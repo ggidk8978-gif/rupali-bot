@@ -446,12 +446,21 @@ async def deeproast(interaction: discord.Interaction):
         )
 
 
+# Discord user IDs (besides the bot owner) who may use /extremeroast.
+# You can add more later in Render with an environment variable: ALLOWED_USER_IDS=111,222
+ALLOWED_USER_IDS = {1082486554670415892}
+for _id in os.environ.get("ALLOWED_USER_IDS", "").split(","):
+    if _id.strip().isdigit():
+        ALLOWED_USER_IDS.add(int(_id.strip()))
+
+
 async def owner_only(interaction: discord.Interaction) -> bool:
+    if interaction.user.id in ALLOWED_USER_IDS:
+        return True
     return await bot.is_owner(interaction.user)
 
 
-@bot.tree.command(name="extremeroast", description="Toggle EXTREME roast mode (bot owner only)")
-@app_commands.default_permissions(administrator=True)
+@bot.tree.command(name="extremeroast", description="Toggle EXTREME roast mode (approved users only)")
 @app_commands.check(owner_only)
 @app_commands.guild_only()
 async def extremeroast(interaction: discord.Interaction):
@@ -676,7 +685,7 @@ async def on_error(interaction: discord.Interaction, error: app_commands.AppComm
     if isinstance(error, app_commands.MissingPermissions):
         msg = "You don't have permission to use that."
     elif isinstance(error, app_commands.CheckFailure):
-        msg = "This command is only for the bot owner."
+        msg = "This command is only for approved users."
     elif isinstance(error, app_commands.CommandInvokeError) and isinstance(error.original, discord.Forbidden):
         msg = "I can't do that. Move my role above theirs and check my permissions."
     else:
