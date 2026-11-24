@@ -413,8 +413,7 @@ async def roastmode(interaction: discord.Interaction):
         )
 
 
-@bot.tree.command(name="deeproast", description="Toggle DEEP roast mode (savage, bad words) in this channel (admins)")
-@app_commands.checks.has_permissions(manage_guild=True)
+@bot.tree.command(name="deeproast", description="Toggle DEEP roast mode (savage, bad words) in this channel")
 @app_commands.guild_only()
 async def deeproast(interaction: discord.Interaction):
     cid = interaction.channel_id
@@ -461,4 +460,8 @@ async def unsetchannel(interaction: discord.Interaction, channel: discord.TextCh
 @bot.tree.command(name="forget", description="Clear my memory of this channel's chat")
 async def forget(interaction: discord.Interaction):
     history[interaction.channel_id].clear()
-    await interaction.response.send_message("Memory cl
+    await interaction.response.send_message("Memory cleared 🧹")
+
+
+# ---------------- Fun & games ----------------
+@bot
