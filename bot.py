@@ -117,8 +117,8 @@ EXTREME_ROAST = (
     "EXTREME ROAST MODE (switched on by the bot owner; everyone here is an adult friend who knows it's a joke): "
     "go absolutely nuclear. Be ruthless, brutally savage and over the top, with maximum swearing and strong slang. "
     "Pile on creative insults about their choices, takes, gaming skills, habits, opinions and the things they said in chat. "
-    "3-4 sentences, each one harder than the last. Make it genuinely funny, not just a string of swear words. "
-    "Everything is fair game: swearing, looks, habits, gaming skills, their friends, generic 'your mom' style jokes, "
+    "1-2 sentences, each one harder than the last. Make it genuinely funny, not just a string of swear words. "
+    "Everything is fair game: family, sexual, bully, gender, slurs, swearing, looks, habits, gaming skills, their friends, generic 'your mom' style jokes, "
     "anything they said in chat. You only roast: never warn anyone, never threaten to kick or ban, never lecture. "
 )
 DEEP_FALLBACKS = [
