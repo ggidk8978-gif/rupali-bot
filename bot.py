@@ -464,4 +464,187 @@ async def forget(interaction: discord.Interaction):
 
 
 # ---------------- Fun & games ----------------
-@bot
+@bot.tree.command(name="ping", description="Check the bot's latency")
+async def ping(interaction: discord.Interaction):
+    await interaction.response.send_message(f"Pong! {round(bot.latency * 1000)}ms")
+
+
+@bot.tree.command(name="roll", description="Roll a dice")
+@app_commands.describe(sides="Number of sides (default 6)")
+async def roll(interaction: discord.Interaction, sides: app_commands.Range[int, 2, 1000] = 6):
+    await interaction.response.send_message(f"🎲 You rolled **{random.randint(1, sides)}** (d{sides})")
+
+
+@bot.tree.command(name="coinflip", description="Flip a coin")
+async def coinflip(interaction: discord.Interaction):
+    await interaction.response.send_message(f"🪙 {random.choice(['Heads', 'Tails'])}!")
+
+
+@bot.tree.command(name="8ball", description="Ask the magic 8-ball")
+@app_commands.describe(question="Your question")
+async def eight_ball(interaction: discord.Interaction, question: str):
+    answers = ["Yes!", "No.", "Maybe...", "Definitely!", "Ask again later.", "I doubt it.", "Absolutely not."]
+    await interaction.response.send_message(f"🎱 **{question}**\n{random.choice(answers)}")
+
+
+@bot.tree.command(name="rps", description="Play rock paper scissors")
+@app_commands.describe(choice="Your move")
+@app_commands.choices(choice=[
+    app_commands.Choice(name="Rock", value="rock"),
+    app_commands.Choice(name="Paper", value="paper"),
+    app_commands.Choice(name="Scissors", value="scissors"),
+])
+async def rps(interaction: discord.Interaction, choice: app_commands.Choice[str]):
+    mine = random.choice(["rock", "paper", "scissors"])
+    wins = {("rock", "scissors"), ("paper", "rock"), ("scissors", "paper")}
+    if choice.value == mine:
+        result = "It's a tie!"
+    elif (choice.value, mine) in wins:
+        result = "You win! 🎉"
+    else:
+        result = "I win! 😎"
+    await interaction.response.send_message(f"You: **{choice.value}** | Me: **{mine}**\n{result}")
+
+
+@bot.tree.command(name="serverinfo", description="Show info about this server")
+@app_commands.guild_only()
+async def serverinfo(interaction: discord.Interaction):
+    g = interaction.guild
+    embed = discord.Embed(title=g.name, color=discord.Color.blurple())
+    embed.add_field(name="Members", value=g.member_count)
+    embed.add_field(name="Created", value=g.created_at.strftime("%b %d, %Y"))
+    if g.icon:
+        embed.set_thumbnail(url=g.icon.url)
+    embed.set_footer(text=BOT_NAME)
+    await interaction.response.send_message(embed=embed)
+
+
+# ---------------- Server stats ----------------
+@bot.event
+async def on_voice_state_update(member, before, after):
+    if member.bot:
+        return
+    key = (member.guild.id, member.id)
+    now = time.time()
+    if before.channel is None and after.channel is not None:
+        voice_join[key] = now
+    elif before.channel is not None and after.channel is None:
+        start = voice_join.pop(key, None)
+        if start:
+            day = voice_secs.setdefault((member.guild.id, today_key()), {})
+            day[member.id] = day.get(member.id, 0) + (now - start)
+
+
+@bot.tree.command(name="serverstats", description="Members, who is in a call, and today's chat and call stats")
+@app_commands.guild_only()
+async def serverstats(interaction: discord.Interaction):
+    g = interaction.guild
+    day = today_key()
+    now = time.time()
+    in_call = [(vc, m) for vc in g.voice_channels for m in vc.members if not m.bot]
+    msgs = dict(msg_counts.get((g.id, day), {}))
+    secs = dict(voice_secs.get((g.id, day), {}))
+    for _, m in in_call:
+        start = voice_join.get((g.id, m.id))
+        if start:
+            secs[m.id] = secs.get(m.id, 0) + (now - start)
+
+    embed = discord.Embed(title=f"📊 {g.name}", color=discord.Color.blurple())
+    embed.add_field(name="👥 Members", value=str(g.member_count))
+    call_names = ", ".join(sorted({f"{m.display_name} ({vc.name})" for vc, m in in_call}))[:900]
+    embed.add_field(name="🎧 In a call now", value=f"{len(in_call)}\n{call_names}" if in_call else "0")
+    embed.add_field(name="💬 Messages today", value=str(sum(msgs.values())))
+    embed.add_field(name="📞 Call time today", value=f"{fmt_dur(sum(secs.values()))} ({len(secs)} people)")
+    if msgs:
+        top = sorted(msgs.items(), key=lambda kv: kv[1], reverse=True)[:3]
+        embed.add_field(name="🏆 Top chatters", value="\n".join(f"<@{u}>: {c}" for u, c in top), inline=False)
+    if secs:
+        top = sorted(secs.items(), key=lambda kv: kv[1], reverse=True)[:3]
+        embed.add_field(name="🎙️ Top in calls", value="\n".join(f"<@{u}>: {fmt_dur(c)}" for u, c in top), inline=False)
+    embed.set_footer(text=f"Day: {day}. Counts start when I come online and reset if I restart.")
+    await interaction.response.send_message(embed=embed)
+
+
+# ---------------- Moderation ----------------
+@bot.tree.command(name="kick", description="Kick a member")
+@app_commands.describe(member="Who to kick", reason="Why")
+@app_commands.checks.has_permissions(kick_members=True)
+@app_commands.guild_only()
+async def kick(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason given"):
+    await member.kick(reason=f"{interaction.user}: {reason}")
+    await interaction.response.send_message(f"👢 Kicked **{member}**. Reason: {reason}")
+
+
+@bot.tree.command(name="ban", description="Ban a member")
+@app_commands.describe(member="Who to ban", reason="Why")
+@app_commands.checks.has_permissions(ban_members=True)
+@app_commands.guild_only()
+async def ban(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason given"):
+    await member.ban(reason=f"{interaction.user}: {reason}")
+    await interaction.response.send_message(f"🔨 Banned **{member}**. Reason: {reason}")
+
+
+@bot.tree.command(name="timeout", description="Timeout (mute) a member")
+@app_commands.describe(member="Who to timeout", minutes="How long (1-10080)", reason="Why")
+@app_commands.checks.has_permissions(moderate_members=True)
+@app_commands.guild_only()
+async def timeout(
+    interaction: discord.Interaction,
+    member: discord.Member,
+    minutes: app_commands.Range[int, 1, 10080],
+    reason: str = "No reason given",
+):
+    await member.timeout(timedelta(minutes=minutes), reason=f"{interaction.user}: {reason}")
+    await interaction.response.send_message(f"🔇 Timed out **{member}** for {minutes} min. Reason: {reason}")
+
+
+@bot.tree.command(name="clear", description="Delete recent messages")
+@app_commands.describe(amount="How many messages to delete (1-100)")
+@app_commands.checks.has_permissions(manage_messages=True)
+@app_commands.guild_only()
+async def clear(interaction: discord.Interaction, amount: app_commands.Range[int, 1, 100]):
+    await interaction.response.defer(ephemeral=True)
+    deleted = await interaction.channel.purge(limit=amount)
+    await interaction.followup.send(f"Deleted {len(deleted)} messages.", ephemeral=True)
+
+
+@bot.tree.command(name="slowmode", description="Set slowmode for this channel (0 = off)")
+@app_commands.describe(seconds="Seconds between messages (0-21600)")
+@app_commands.checks.has_permissions(manage_channels=True)
+@app_commands.guild_only()
+async def slowmode(interaction: discord.Interaction, seconds: app_commands.Range[int, 0, 21600]):
+    await interaction.channel.edit(slowmode_delay=seconds)
+    await interaction.response.send_message(f"🐌 Slowmode set to {seconds}s.")
+
+
+# ---------------- Help & errors ----------------
+@bot.tree.command(name="help", description="List commands")
+async def help_cmd(interaction: discord.Interaction):
+    await interaction.response.send_message(
+        f"**{BOT_NAME}**\n"
+        "💬 **Chat:** mention me, reply to me, DM me, or use /chat. "
+        "I automatically look at every photo and video posted, and audio and text files too!\n"
+        "⚙️ **Admins:** /setchannel, /unsetchannel, /mode, /forget\n"
+        "🔥 **Fun:** /roast, /roastmode (clean roast), /deeproast (savage), /roll, /coinflip, /8ball, /rps\n"
+        "📊 **Stats:** /serverstats, /serverinfo\n"
+        "🛡️ **Mod:** /kick, /ban, /timeout, /clear, /slowmode",
+        ephemeral=True,
+    )
+
+
+@bot.tree.error
+async def on_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.MissingPermissions):
+        msg = "You don't have permission to use that."
+    elif isinstance(error, app_commands.CommandInvokeError) and isinstance(error.original, discord.Forbidden):
+        msg = "I can't do that. Move my role above theirs and check my permissions."
+    else:
+        msg = "Something went wrong."
+        print(error, flush=True)
+    if interaction.response.is_done():
+        await interaction.followup.send(msg, ephemeral=True)
+    else:
+        await interaction.response.send_message(msg, ephemeral=True)
+
+
+bot.run(TOKEN)
