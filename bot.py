@@ -4,7 +4,7 @@ import os
 import random
 import time
 from collections import defaultdict, deque
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import aiohttp
@@ -64,7 +64,8 @@ PERSONAS = {
         "Do NOT roast or insult anyone unless they clearly ask you to."
     ),
     "roast": (
-        "ROAST MODE: playfully roast the person in your reply, based on what they said. "
+        "ROAST MODE (clean): playfully roast the person in your reply, based on what they said. "
+        "Do NOT use any swear words or bad language at all, keep it clean but still sharp. "
         "Be sarcastic, witty and savage like close friends joking around. "
         "If they ask a real question, still answer it correctly, just in a roasting tone. "
         "Never mock race, religion, gender, disability, family, looks or anything truly "
@@ -79,10 +80,48 @@ guild_mode = {}
 ai_channels = defaultdict(set)
 history = defaultdict(lambda: deque(maxlen=12))
 last_used = {}
-roast_channels = set()  # channels where roast mode is switched on
+roast_channels = set()  # channels where NORMAL (clean) roast mode is on
+deep_channels = set()   # channels where DEEP (savage, swearing) roast mode is on
+watch_last = {}
+
+# Daily stats (kept in memory, so they reset when the bot restarts)
+TZ_OFFSET = timedelta(minutes=int(os.environ.get("TZ_OFFSET_MINUTES", "330")))  # 330 = India time
+msg_counts = {}                       # (guild_id, day) -> {user_id: messages}
+voice_secs = {}                       # (guild_id, day) -> {user_id: seconds in call}
+voice_join = {}                       # (guild_id, user_id) -> time they joined a call
+user_recent = defaultdict(lambda: deque(maxlen=8))  # recent messages, only in roast-mode channels
 
 
-def persona_for(guild, channel_id=None):
+def today_key():
+    return (datetime.now(timezone.utc) + TZ_OFFSET).strftime("%Y-%m-%d")
+
+
+def fmt_dur(seconds):
+    seconds = int(seconds)
+    h, m = seconds // 3600, (seconds % 3600) // 60
+    return f"{h}h {m}m" if h else f"{m}m"
+
+
+DEEP_ROAST = (
+    "ROAST MODE (the server turned this on; everyone here is an adult friend): "
+    "be absolutely savage, creative and funny. Use strong language and slang freely. "
+    "Roast their choices, takes, gaming skills, habits and the things they said in chat. "
+    "Make it clever, not just insults. Keep it to 2-3 sentences. "
+    "HARD LIMITS: never attack race, ethnicity, religion, caste, nationality, gender, "
+    "sexuality, disability, body or looks, family members, health or trauma. "
+    "No slurs, no threats, no sexual content, never encourage self-harm. "
+    "If they say stop or seem upset, stop roasting and be kind."
+)
+DEEP_FALLBACKS = [
+    "Bro you lose so much you deserve a loyalty card from the loser's lobby.",
+    "Damn, your takes are so bad even autocorrect gave up on you.",
+    "You're the reason the mute button exists, no cap.",
+]
+
+
+def persona_for(guild, channel_id=None, user_id=None, engaged=True):
+    if channel_id in deep_channels:
+        return f"{BASE_RULES} {DEEP_ROAST}"
     if channel_id in roast_channels:
         return f"{BASE_RULES} {PERSONAS['roast']}"
     mode = guild_mode.get(guild.id, "normal") if guild else "normal"
@@ -202,6 +241,12 @@ async def setup_hook():
 async def on_ready():
     print(f"Logged in as {bot.user} (ID: {bot.user.id})", flush=True)
     await bot.change_presence(activity=discord.Game(name=f"{BOT_NAME} | /help"))
+    # Start timing people who are already in a call
+    for g in bot.guilds:
+        for vc in g.voice_channels:
+            for m in vc.members:
+                if not m.bot:
+                    voice_join.setdefault((g.id, m.id), time.time())
 
 
 # ---------------- AI chat ----------------
@@ -209,6 +254,13 @@ async def on_ready():
 async def on_message(message: discord.Message):
     if message.author.bot:
         return
+
+    gid = message.guild.id if message.guild else 0
+    if message.guild:
+        counts = msg_counts.setdefault((gid, today_key()), {})
+        counts[message.author.id] = counts.get(message.author.id, 0) + 1
+    if message.content and message.guild and (message.channel.id in roast_channels or message.channel.id in deep_channels):
+        user_recent[(gid, message.author.id)].append(message.content[:200])
 
     mentioned = bot.user in message.mentions
     in_ai_channel = message.guild and message.channel.id in ai_channels[message.guild.id]
@@ -227,8 +279,17 @@ async def on_message(message: discord.Message):
             ref_message = ref
 
     replied_to_bot = bool(ref_message and ref_message.author.id == bot.user.id)
-    if not (mentioned or replied_to_bot or in_ai_channel or is_dm):
+    watching = bool(
+        message.guild
+        and any((a.content_type or "").startswith(("image/", "video/")) for a in message.attachments)
+    )
+    if not (mentioned or replied_to_bot or in_ai_channel or is_dm or watching):
         return
+    if watching and not (mentioned or replied_to_bot or in_ai_channel or is_dm):
+        if time.time() - watch_last.get(message.channel.id, 0) < 10:
+            return
+        watch_last[message.channel.id] = time.time()
+    engaged = bool(mentioned or replied_to_bot or in_ai_channel or is_dm)
 
     now = time.time()
     if now - last_used.get(message.author.id, 0) < 3:
@@ -257,17 +318,29 @@ async def on_message(message: discord.Message):
         reply_note = f'They are replying to {who}: "{(ref_message.content or "(no text)")[:300]}"\n'
 
     lines = "\n".join(history[message.channel.id])
+    material = ""
+    if message.channel.id in roast_channels or message.channel.id in deep_channels:
+        recent = list(user_recent[(gid, message.author.id)])
+        if recent:
+            material = "Things they said recently (use as roast material):\n" + "\n".join(recent) + "\n"
+
+    watch_note = ""
+    if watching and not engaged:
+        watch_note = (
+            "Someone posted this in the channel without talking to you. Look at it carefully, "
+            "say what is in it, and react in a funny way.\n"
+        )
 
     async with message.channel.typing():
         media, notes = await collect_media(attachments) if attachments else ([], [])
         note_text = ("Note for you: " + " ".join(notes) + " Tell them about it in a funny way.\n") if notes else ""
         prompt = (
             f"Recent chat:\n{lines}\n\n"
-            f"{reply_note}{note_text}"
+            f"{reply_note}{note_text}{watch_note}{material}"
             f"New message from {message.author.display_name}: {text}\n\n"
             f"Reply as {BOT_NAME}."
         )
-        reply = await ask_ai(persona_for(message.guild, message.channel.id), prompt, media)
+        reply = await ask_ai(persona_for(message.guild, message.channel.id, message.author.id, engaged), prompt, media)
 
     if not reply:
         await message.reply("My brain lagged for a sec. Try again!")
@@ -290,25 +363,34 @@ async def chat(interaction: discord.Interaction, message: str, file: Optional[di
     media, notes = await collect_media([file]) if file else ([], [])
     note_text = ("Note for you: " + " ".join(notes) + " Tell them about it in a funny way.\n") if notes else ""
     prompt = f"{note_text}{interaction.user.display_name} says: {message}"
-    reply = await ask_ai(persona_for(interaction.guild, interaction.channel_id), prompt, media)
+    reply = await ask_ai(persona_for(interaction.guild, interaction.channel_id, interaction.user.id), prompt, media)
     chunks = split_text(reply or "My AI brain isn't available right now.")
     for c in chunks:
         await interaction.followup.send(c)
 
 
-@bot.tree.command(name="roast", description="Playfully roast someone")
+@bot.tree.command(name="roast", description="Roast someone (savage with bad words if /deeproast is on here)")
 @app_commands.describe(user="Who to roast")
 @app_commands.guild_only()
 async def roast(interaction: discord.Interaction, user: discord.Member):
     await interaction.response.defer()
-    system = f"{BASE_RULES} {PERSONAS['roast']}"
-    prompt = (
-        f"Write a playful, lighthearted 1-2 sentence roast of {user.display_name}. "
-        "Keep it funny, not hurtful. Don't mention looks, family, race, religion, gender or health."
-    )
+    deep = interaction.channel_id in deep_channels
+    if deep:
+        system = f"{BASE_RULES} {DEEP_ROAST}"
+        material = "\n".join(user_recent[(interaction.guild.id, user.id)])
+        prompt = (
+            f"Roast {user.display_name} brutally in 2-3 sentences. "
+            f"Use what they said recently as material if you can.\n\nTheir recent messages:\n{material}"
+        )
+    else:
+        system = f"{BASE_RULES} {PERSONAS['roast']}"
+        prompt = (
+            f"Write a playful, lighthearted 1-2 sentence roast of {user.display_name}. "
+            "Keep it funny, not hurtful. Don't mention looks, family, race, religion, gender or health."
+        )
     reply = await ask_ai(system, prompt)
     if not reply:
-        reply = random.choice([
+        reply = random.choice(DEEP_FALLBACKS if deep else [
             "You're the human version of a loading screen.",
             "You bring so much energy... to the group chat's mute button.",
             "Your Wi-Fi has better connections than you do.",
@@ -316,16 +398,35 @@ async def roast(interaction: discord.Interaction, user: discord.Member):
     await interaction.followup.send(f"{user.mention} {reply}"[:1900])
 
 
-@bot.tree.command(name="roastmode", description="Toggle roast mode in this channel (use again for normal chat)")
+@bot.tree.command(name="roastmode", description="Toggle NORMAL roast mode (no bad words) in this channel")
 async def roastmode(interaction: discord.Interaction):
     cid = interaction.channel_id
     if cid in roast_channels:
         roast_channels.discard(cid)
-        await interaction.response.send_message("😇 Roast mode OFF. Back to normal, friendly chat.")
+        await interaction.response.send_message("😇 Roast mode OFF. No more roasting, back to normal chat.")
     else:
         roast_channels.add(cid)
+        deep_channels.discard(cid)
         await interaction.response.send_message(
-            "🔥 Roast mode ON! I'll roast everyone who talks to me here. Use /roastmode again for normal chat."
+            "🔥 Roast mode ON (clean, no bad words)! I'll roast everyone here, in messages, photos and videos. "
+            "Use /roastmode again to stop."
+        )
+
+
+@bot.tree.command(name="deeproast", description="Toggle DEEP roast mode (savage, bad words) in this channel (admins)")
+@app_commands.checks.has_permissions(manage_guild=True)
+@app_commands.guild_only()
+async def deeproast(interaction: discord.Interaction):
+    cid = interaction.channel_id
+    if cid in deep_channels:
+        deep_channels.discard(cid)
+        await interaction.response.send_message("😇 Deep roast OFF. No more roasting, back to normal chat.")
+    else:
+        deep_channels.add(cid)
+        roast_channels.discard(cid)
+        await interaction.response.send_message(
+            "☠️ DEEP ROAST ON! Savage roasts with bad words for everyone who talks here, "
+            "in messages, photos and videos. Use /deeproast again to stop."
         )
 
 
@@ -360,111 +461,4 @@ async def unsetchannel(interaction: discord.Interaction, channel: discord.TextCh
 @bot.tree.command(name="forget", description="Clear my memory of this channel's chat")
 async def forget(interaction: discord.Interaction):
     history[interaction.channel_id].clear()
-    await interaction.response.send_message("Memory cleared 🧹")
-
-
-# ---------------- Fun & games ----------------
-@bot.tree.command(name="ping", description="Check the bot's latency")
-async def ping(interaction: discord.Interaction):
-    await interaction.response.send_message(f"Pong! {round(bot.latency * 1000)}ms")
-
-
-@bot.tree.command(name="roll", description="Roll a dice")
-@app_commands.describe(sides="Number of sides (default 6)")
-async def roll(interaction: discord.Interaction, sides: app_commands.Range[int, 2, 1000] = 6):
-    await interaction.response.send_message(f"🎲 You rolled **{random.randint(1, sides)}** (d{sides})")
-
-
-@bot.tree.command(name="coinflip", description="Flip a coin")
-async def coinflip(interaction: discord.Interaction):
-    await interaction.response.send_message(f"🪙 {random.choice(['Heads', 'Tails'])}!")
-
-
-@bot.tree.command(name="8ball", description="Ask the magic 8-ball")
-@app_commands.describe(question="Your question")
-async def eight_ball(interaction: discord.Interaction, question: str):
-    answers = ["Yes!", "No.", "Maybe...", "Definitely!", "Ask again later.", "I doubt it.", "Absolutely not."]
-    await interaction.response.send_message(f"🎱 **{question}**\n{random.choice(answers)}")
-
-
-@bot.tree.command(name="rps", description="Play rock paper scissors")
-@app_commands.describe(choice="Your move")
-@app_commands.choices(choice=[
-    app_commands.Choice(name="Rock", value="rock"),
-    app_commands.Choice(name="Paper", value="paper"),
-    app_commands.Choice(name="Scissors", value="scissors"),
-])
-async def rps(interaction: discord.Interaction, choice: app_commands.Choice[str]):
-    mine = random.choice(["rock", "paper", "scissors"])
-    wins = {("rock", "scissors"), ("paper", "rock"), ("scissors", "paper")}
-    if choice.value == mine:
-        result = "It's a tie!"
-    elif (choice.value, mine) in wins:
-        result = "You win! 🎉"
-    else:
-        result = "I win! 😎"
-    await interaction.response.send_message(f"You: **{choice.value}** | Me: **{mine}**\n{result}")
-
-
-@bot.tree.command(name="serverinfo", description="Show info about this server")
-@app_commands.guild_only()
-async def serverinfo(interaction: discord.Interaction):
-    g = interaction.guild
-    embed = discord.Embed(title=g.name, color=discord.Color.blurple())
-    embed.add_field(name="Members", value=g.member_count)
-    embed.add_field(name="Created", value=g.created_at.strftime("%b %d, %Y"))
-    if g.icon:
-        embed.set_thumbnail(url=g.icon.url)
-    embed.set_footer(text=BOT_NAME)
-    await interaction.response.send_message(embed=embed)
-
-
-# ---------------- Moderation ----------------
-@bot.tree.command(name="kick", description="Kick a member")
-@app_commands.describe(member="Who to kick", reason="Why")
-@app_commands.checks.has_permissions(kick_members=True)
-@app_commands.guild_only()
-async def kick(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason given"):
-    await member.kick(reason=f"{interaction.user}: {reason}")
-    await interaction.response.send_message(f"👢 Kicked **{member}**. Reason: {reason}")
-
-
-@bot.tree.command(name="ban", description="Ban a member")
-@app_commands.describe(member="Who to ban", reason="Why")
-@app_commands.checks.has_permissions(ban_members=True)
-@app_commands.guild_only()
-async def ban(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason given"):
-    await member.ban(reason=f"{interaction.user}: {reason}")
-    await interaction.response.send_message(f"🔨 Banned **{member}**. Reason: {reason}")
-
-
-@bot.tree.command(name="timeout", description="Timeout (mute) a member")
-@app_commands.describe(member="Who to timeout", minutes="How long (1-10080)", reason="Why")
-@app_commands.checks.has_permissions(moderate_members=True)
-@app_commands.guild_only()
-async def timeout(
-    interaction: discord.Interaction,
-    member: discord.Member,
-    minutes: app_commands.Range[int, 1, 10080],
-    reason: str = "No reason given",
-):
-    await member.timeout(timedelta(minutes=minutes), reason=f"{interaction.user}: {reason}")
-    await interaction.response.send_message(f"🔇 Timed out **{member}** for {minutes} min. Reason: {reason}")
-
-
-@bot.tree.command(name="clear", description="Delete recent messages")
-@app_commands.describe(amount="How many messages to delete (1-100)")
-@app_commands.checks.has_permissions(manage_messages=True)
-@app_commands.guild_only()
-async def clear(interaction: discord.Interaction, amount: app_commands.Range[int, 1, 100]):
-    await interaction.response.defer(ephemeral=True)
-    deleted = await interaction.channel.purge(limit=amount)
-    await interaction.followup.send(f"Deleted {len(deleted)} messages.", ephemeral=True)
-
-
-@bot.tree.command(name="slowmode", description="Set slowmode for this channel (0 = off)")
-@app_commands.describe(seconds="Seconds between messages (0-21600)")
-@app_commands.checks.has_permissions(manage_channels=True)
-@app_commands.guild_only()
-async def slowmode(interaction: discord.Interaction, seconds: app_commands.Range[int, 0, 21600]):
-    await interaction.ch
+    await interaction.response.send_message("Memory cl
