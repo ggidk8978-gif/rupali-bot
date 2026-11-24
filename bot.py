@@ -82,6 +82,7 @@ history = defaultdict(lambda: deque(maxlen=12))
 last_used = {}
 roast_channels = set()  # channels where NORMAL (clean) roast mode is on
 deep_channels = set()   # channels where DEEP (savage, swearing) roast mode is on
+extreme_channels = set()  # channels where EXTREME roast mode is on (owner only)
 watch_last = {}
 
 # Daily stats (kept in memory, so they reset when the bot restarts)
@@ -112,6 +113,17 @@ DEEP_ROAST = (
     "No slurs, no threats, no sexual content, never encourage self-harm. "
     "If they say stop or seem upset, stop roasting and be kind."
 )
+EXTREME_ROAST = (
+    "EXTREME ROAST MODE (switched on by the bot owner; everyone here is an adult friend who knows it's a joke): "
+    "go absolutely nuclear. Be ruthless, brutally savage and over the top, with maximum swearing and strong slang. "
+    "Pile on creative insults about their choices, takes, gaming skills, habits, opinions and the things they said in chat. "
+    "3-4 sentences, each one harder than the last. Make it genuinely funny, not just a string of swear words. "
+    "Everything is fair game: swearing, looks, habits, gaming skills, their friends, generic 'your mom' style jokes, "
+    "anything they said in chat. You only roast: never warn anyone, never threaten to kick or ban, never lecture. "
+    "The only lines you never cross: no slurs and no attacks on race, ethnicity, religion, caste, nationality, "
+    "gender, sexuality or disability; no real threats of violence; no sexual content; never encourage self-harm; "
+    "no jokes about real deaths, illness, abuse or trauma. If someone genuinely says they're really hurt, ease off."
+)
 DEEP_FALLBACKS = [
     "Bro you lose so much you deserve a loyalty card from the loser's lobby.",
     "Damn, your takes are so bad even autocorrect gave up on you.",
@@ -120,6 +132,8 @@ DEEP_FALLBACKS = [
 
 
 def persona_for(guild, channel_id=None, user_id=None, engaged=True):
+    if channel_id in extreme_channels:
+        return f"{BASE_RULES} {EXTREME_ROAST}"
     if channel_id in deep_channels:
         return f"{BASE_RULES} {DEEP_ROAST}"
     if channel_id in roast_channels:
@@ -259,7 +273,7 @@ async def on_message(message: discord.Message):
     if message.guild:
         counts = msg_counts.setdefault((gid, today_key()), {})
         counts[message.author.id] = counts.get(message.author.id, 0) + 1
-    if message.content and message.guild and (message.channel.id in roast_channels or message.channel.id in deep_channels):
+    if message.content and message.guild and (message.channel.id in roast_channels or message.channel.id in deep_channels or message.channel.id in extreme_channels):
         user_recent[(gid, message.author.id)].append(message.content[:200])
 
     mentioned = bot.user in message.mentions
@@ -319,7 +333,7 @@ async def on_message(message: discord.Message):
 
     lines = "\n".join(history[message.channel.id])
     material = ""
-    if message.channel.id in roast_channels or message.channel.id in deep_channels:
+    if message.channel.id in roast_channels or message.channel.id in deep_channels or message.channel.id in extreme_channels:
         recent = list(user_recent[(gid, message.author.id)])
         if recent:
             material = "Things they said recently (use as roast material):\n" + "\n".join(recent) + "\n"
@@ -374,9 +388,10 @@ async def chat(interaction: discord.Interaction, message: str, file: Optional[di
 @app_commands.guild_only()
 async def roast(interaction: discord.Interaction, user: discord.Member):
     await interaction.response.defer()
-    deep = interaction.channel_id in deep_channels
+    extreme = interaction.channel_id in extreme_channels
+    deep = extreme or interaction.channel_id in deep_channels
     if deep:
-        system = f"{BASE_RULES} {DEEP_ROAST}"
+        system = f"{BASE_RULES} {EXTREME_ROAST if extreme else DEEP_ROAST}"
         material = "\n".join(user_recent[(interaction.guild.id, user.id)])
         prompt = (
             f"Roast {user.display_name} brutally in 2-3 sentences. "
@@ -407,6 +422,7 @@ async def roastmode(interaction: discord.Interaction):
     else:
         roast_channels.add(cid)
         deep_channels.discard(cid)
+        extreme_channels.discard(cid)
         await interaction.response.send_message(
             "🔥 Roast mode ON (clean, no bad words)! I'll roast everyone here, in messages, photos and videos. "
             "Use /roastmode again to stop."
@@ -423,9 +439,32 @@ async def deeproast(interaction: discord.Interaction):
     else:
         deep_channels.add(cid)
         roast_channels.discard(cid)
+        extreme_channels.discard(cid)
         await interaction.response.send_message(
             "☠️ DEEP ROAST ON! Savage roasts with bad words for everyone who talks here, "
             "in messages, photos and videos. Use /deeproast again to stop."
+        )
+
+
+async def owner_only(interaction: discord.Interaction) -> bool:
+    return await bot.is_owner(interaction.user)
+
+
+@bot.tree.command(name="extremeroast", description="Toggle EXTREME roast mode (bot owner only)")
+@app_commands.default_permissions(administrator=True)
+@app_commands.check(owner_only)
+@app_commands.guild_only()
+async def extremeroast(interaction: discord.Interaction):
+    cid = interaction.channel_id
+    if cid in extreme_channels:
+        extreme_channels.discard(cid)
+        await interaction.response.send_message("😇 Extreme roast OFF. Back to normal chat.")
+    else:
+        extreme_channels.add(cid)
+        roast_channels.discard(cid)
+        deep_channels.discard(cid)
+        await interaction.response.send_message(
+            "💀 EXTREME ROAST ON! No mercy for anyone who talks here. Run /extremeroast again to stop."
         )
 
 
@@ -636,6 +675,8 @@ async def help_cmd(interaction: discord.Interaction):
 async def on_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.MissingPermissions):
         msg = "You don't have permission to use that."
+    elif isinstance(error, app_commands.CheckFailure):
+        msg = "This command is only for the bot owner."
     elif isinstance(error, app_commands.CommandInvokeError) and isinstance(error.original, discord.Forbidden):
         msg = "I can't do that. Move my role above theirs and check my permissions."
     else:
