@@ -20,7 +20,12 @@ TOKEN = os.environ.get("DISCORD_TOKEN")
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
 # If the main model fails, these are tried next.
-FALLBACK_MODELS = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]
+FALLBACK_MODELS = [
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+    "gemma-4-26b-a4b-it",
+    "gemma-4-31b-it",
+]
 
 if not TOKEN:
     raise SystemExit("Set the DISCORD_TOKEN environment variable first.")
@@ -188,8 +193,7 @@ async def call_gemini(model, system, prompt, media, timeout):
     """One request to Gemini. Returns (text or None, error string or None)."""
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
     payload = {
-        "systemInstruction": {"parts": [{"text": system}]},
-        "contents": [{"role": "user", "parts": list(media) + [{"text": prompt}]}],
+        "systemInstruction": {"role": "system", "parts": [{"text": system}]},"contents": [{"role": "user", "parts": list(media) + [{"text": prompt}]}],
         "generationConfig": {"maxOutputTokens": 3000, "temperature": 1.0},
     }
     try:
