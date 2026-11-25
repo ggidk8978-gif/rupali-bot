@@ -18,9 +18,9 @@ BOT_NAME = "Rupali"
 # Secrets come from environment variables (never write them in this file).
 TOKEN = os.environ.get("DISCORD_TOKEN")
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-lite-latest")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
 # If the main model fails, these are tried next.
-FALLBACK_MODELS = ["gemini-flash-lite-latest", "gemini-flash-latest", "gemini-3.8-flash"]
+FALLBACK_MODELS = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]
 
 if not TOKEN:
     raise SystemExit("Set the DISCORD_TOKEN environment variable first.")
