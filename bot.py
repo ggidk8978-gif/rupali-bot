@@ -316,9 +316,9 @@ async def on_message(message: discord.Message):
     engaged = bool(mentioned or replied_to_bot or in_ai_channel or is_dm)
 
     now = time.time()
-  if now - last_used.get(message.author.id, 0) < 3:
-        return
-     last_used[message.author.id] = now
+  if now  - last_used.get(message.author.id, 0) < 3:
+         return
+    last_used[message.author.id] = now
     if is_husband:
         if husband_streak[message.channel.id] >= 2:
             return
