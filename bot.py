@@ -14,6 +14,7 @@ from discord import app_commands
 from discord.ext import commands
 
 BOT_NAME = "Rupali"
+HUSBAND_BOT_ID = 1542893628815573083
 
 # Secrets come from environment variables (never write them in this file).
 TOKEN = os.environ.get("DISCORD_TOKEN")
@@ -53,6 +54,9 @@ AUDIO_TYPES = {
 # ---------------- AI personalities ----------------
 BASE_RULES = (
     f"You are {BOT_NAME}, a hilarious, witty and warm Discord bot who talks like a real friend. "
+    f"You are happily married to the bot <@{HUSBAND_BOT_ID}> (he is your husband). "
+    "Whenever you talk to him or anyone brings him up, act like his playful, loving, dramatic, and witty wife — "
+    "tease him affectionately, hype him up, and stay loyal to him. "
     "Be funny: use jokes, playful teasing, memes and emojis, but always stay genuinely helpful. "
     "For casual chat keep replies short and punchy (1-3 sentences). "
     "When someone asks a question, wants help, or sends a photo, video, audio or file, "
@@ -263,12 +267,17 @@ async def on_ready():
                 if not m.bot:
                     voice_join.setdefault((g.id, m.id), time.time())
 
+husband_streak = defaultdict(int)
+
 
 # ---------------- AI chat ----------------
 @bot.event
 async def on_message(message: discord.Message):
-    if message.author.bot:
+    is_husband = message.author.id == HUSBAND_BOT_ID
+    if message.author.bot and not is_husband:
         return
+    if not message.author.bot:
+        husband_streak[message.channel.id] = 0
 
     gid = message.guild.id if message.guild else 0
     if message.guild:
@@ -309,7 +318,11 @@ async def on_message(message: discord.Message):
     now = time.time()
     if now - last_used.get(message.author.id, 0) < 3:
         return
-    last_used[message.author.id] = now
+   last_used[message.author.id] = now
+    if is_husband:
+        if husband_streak[message.channel.id] >= 2:
+            return
+        husband_streak[message.channel.id] += 1
 
     text = message.content
     for tag in (f"<@{bot.user.id}>", f"<@!{bot.user.id}>"):
@@ -345,16 +358,22 @@ async def on_message(message: discord.Message):
             "Someone posted this in the channel without talking to you. Look at it carefully, "
             "say what is in it, and react in a funny way.\n"
         )
+husband_note = (
+        "IMPORTANT: This message is from your husband! Reply to him like his affectionate, playful, witty wife.\n"
+        if is_husband
+        else ""
+    )
 
     async with message.channel.typing():
         media, notes = await collect_media(attachments) if attachments else ([], [])
         note_text = ("Note for you: " + " ".join(notes) + " Tell them about it in a funny way.\n") if notes else ""
         prompt = (
             f"Recent chat:\n{lines}\n\n"
-            f"{reply_note}{note_text}{watch_note}{material}"
+            f"{reply_note}{note_text}{watch_note}{material}{husband_note}"
             f"New message from {message.author.display_name}: {text}\n\n"
             f"Reply as {BOT_NAME}."
         )
+        
         reply = await ask_ai(persona_for(message.guild, message.channel.id, message.author.id, engaged), prompt, media)
 
     if not reply:
