@@ -389,7 +389,6 @@ async with message.channel.typing():
         for extra in chunks[1:]:
             await message.channel.send(extra)
 
-
 @bot.tree.command(name="chat", description=f"Talk to {BOT_NAME} (you can attach a photo or video)")
 @app_commands.describe(message="What do you want to say or ask?", file="Optional photo, video or file")
 async def chat(interaction: discord.Interaction, message: str, file: Optional[discord.Attachment] = None):
