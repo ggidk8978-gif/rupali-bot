@@ -317,7 +317,7 @@ async def on_message(message: discord.Message):
 
     now = time.time()
     if now - last_used.get(message.author.id, 0) < 3:
-    return
+        return
     last_used[message.author.id] = now
     if is_husband:
         if husband_streak[message.channel.id] >= 2:
