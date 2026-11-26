@@ -373,8 +373,8 @@ async with message.channel.typing():
             f"New message from {message.author.display_name}: {text}\n\n"
             f"Reply as {BOT_NAME}."
         )
-        
-        reply = await ask_ai(persona_for(message.guild, message.channel.id, message.author.id, engaged), prompt, media)
+       
+    reply = await ask_ai(persona_for(message.guild, message.channel.id, message.author.id, engaged), prompt, media)
 
     if not reply:
         await message.reply("My brain lagged for a sec. Try again!")
