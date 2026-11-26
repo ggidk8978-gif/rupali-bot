@@ -459,7 +459,7 @@ async def deeproast(interaction: discord.Interaction):
         deep_channels.discard(cid)
         await interaction.response.send_message("😇 Deep roast OFF. No more roasting, back to normal chat.")
     else:
-    deep_channels.add(cid)
+        deep_channels.add(cid)
         roast_channels.discard(cid)
         extreme_channels.discard(cid)
         await interaction.response.send_message(
