@@ -197,7 +197,8 @@ async def call_gemini(model, system, prompt, media, timeout):
     """One request to Gemini. Returns (text or None, error string or None)."""
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
     payload = {
-        "systemInstruction": {"role": "system", "parts": [{"text": system}]},"contents": [{"role": "user", "parts": list(media) + [{"text": prompt}]}],
+        "systemInstruction": {"role": "system", "parts": [{"text": system}]},
+        "contents": [{"role": "user", "parts": list(media) + [{"text": prompt}]}],
         "generationConfig": {"maxOutputTokens": 3000, "temperature": 1.0},
     }
     try:
@@ -266,6 +267,7 @@ async def on_ready():
             for m in vc.members:
                 if not m.bot:
                     voice_join.setdefault((g.id, m.id), time.time())
+
 
 husband_streak = defaultdict(int)
 
@@ -358,13 +360,13 @@ async def on_message(message: discord.Message):
             "Someone posted this in the channel without talking to you. Look at it carefully, "
             "say what is in it, and react in a funny way.\n"
         )
-husband_note = (
+    husband_note = (
         "IMPORTANT: This message is from your husband! Reply to him like his affectionate, playful, witty wife.\n"
         if is_husband
         else ""
     )
 
-async with message.channel.typing():
+    async with message.channel.typing():
         media, notes = await collect_media(attachments) if attachments else ([], [])
         note_text = ("Note for you: " + " ".join(notes) + " Tell them about it in a funny way.\n") if notes else ""
         prompt = (
@@ -380,7 +382,7 @@ async with message.channel.typing():
             await message.reply("My brain lagged for a sec. Try again!")
             return
 
-    tag = " [sent a file]" if attachments else ""
+        tag = " [sent a file]" if attachments else ""
         history[message.channel.id].append(f"{message.author.display_name}: {text}{tag}")
         history[message.channel.id].append(f"{BOT_NAME}: {reply[:600]}")
 
@@ -388,6 +390,7 @@ async with message.channel.typing():
         await message.reply(chunks[0], mention_author=False)
         for extra in chunks[1:]:
             await message.channel.send(extra)
+
 
 @bot.tree.command(name="chat", description=f"Talk to {BOT_NAME} (you can attach a photo or video)")
 @app_commands.describe(message="What do you want to say or ask?", file="Optional photo, video or file")
@@ -456,7 +459,7 @@ async def deeproast(interaction: discord.Interaction):
         deep_channels.discard(cid)
         await interaction.response.send_message("😇 Deep roast OFF. No more roasting, back to normal chat.")
     else:
-        deep_channels.add(cid)
+    deep_channels.add(cid)
         roast_channels.discard(cid)
         extreme_channels.discard(cid)
         await interaction.response.send_message(
