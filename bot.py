@@ -364,7 +364,7 @@ husband_note = (
         else ""
     )
 
-    async with message.channel.typing():
+async with message.channel.typing():
         media, notes = await collect_media(attachments) if attachments else ([], [])
         note_text = ("Note for you: " + " ".join(notes) + " Tell them about it in a funny way.\n") if notes else ""
         prompt = (
