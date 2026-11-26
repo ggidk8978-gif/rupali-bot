@@ -381,13 +381,13 @@ async with message.channel.typing():
             return
 
     tag = " [sent a file]" if attachments else ""
-    history[message.channel.id].append(f"{message.author.display_name}: {text}{tag}")
-    history[message.channel.id].append(f"{BOT_NAME}: {reply[:600]}")
+        history[message.channel.id].append(f"{message.author.display_name}: {text}{tag}")
+        history[message.channel.id].append(f"{BOT_NAME}: {reply[:600]}")
 
-    chunks = split_text(reply)
-    await message.reply(chunks[0], mention_author=False)
-    for extra in chunks[1:]:
-        await message.channel.send(extra)
+        chunks = split_text(reply)
+        await message.reply(chunks[0], mention_author=False)
+        for extra in chunks[1:]:
+            await message.channel.send(extra)
 
 
 @bot.tree.command(name="chat", description=f"Talk to {BOT_NAME} (you can attach a photo or video)")
